@@ -1,0 +1,85 @@
+name: Update CN IPv4 Rules
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每天北京时间 07:47 运行
+    - cron: "47 23 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download CN rules
+        run: |
+          curl -fsSL \
+            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo-lite/geoip/cn.list" \
+            -o cn-original.list
+
+      - name: Remove IPv6
+        run: |
+          awk 'NF && $0 !~ /:/' \
+            cn-original.list > cn-ipv4-only.list
+
+          if grep -q ':' cn-ipv4-only.list; then
+            echo "IPv6 removal failed"
+            exit 1
+          fi
+
+          test -s cn-ipv4-only.list
+
+      - name: Download latest Mihomo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MIHOMO_URL=$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" |
+            jq -r '.assets[].browser_download_url' |
+            grep -E 'mihomo-linux-amd64-compatible-v[^/]+\.gz$' |
+            head -n 1
+          )
+
+          test -n "${MIHOMO_URL}"
+
+          curl -fsSL "${MIHOMO_URL}" -o mihomo.gz
+          gzip -dc mihomo.gz > mihomo
+          chmod +x mihomo
+
+      - name: Generate IPv4 MRS
+        run: |
+          ./mihomo convert-ruleset \
+            ipcidr text \
+            cn-ipv4-only.list \
+            cn-ipv4-only.mrs
+
+          test -s cn-ipv4-only.mrs
+
+      - name: Commit updated file
+        run: |
+          rm -f cn-original.list
+          rm -f cn-ipv4-only.list
+          rm -f mihomo
+          rm -f mihomo.gz
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add cn-ipv4-only.mrs
+
+          if git diff --cached --quiet; then
+            echo "No updates"
+            exit 0
+          fi
+
+          git commit -m "Update CN IPv4 rules"
+          git push origin HEAD:main
