@@ -1,0 +1,97 @@
+name: Update Merged Ads Rules
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/update-merged-ads.yml"
+  schedule:
+    # 每天北京时间 08:17 运行（UTC 00:17）
+    - cron: "17 0 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download source rules
+        run: |
+          curl -fsSL --retry 3 \
+            "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Clash.mrs" \
+            -o awavenue.mrs
+          curl -fsSL --retry 3 \
+            "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockmihomolite.mrs" \
+            -o 217heidai.mrs
+
+      - name: Download latest Mihomo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MIHOMO_URL=$(
+            curl -fsSL --retry 3 \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" |
+            jq -r '.assets[].browser_download_url' |
+            grep -E '/mihomo-linux-amd64-compatible-v[^/]+\.gz$' |
+            head -n 1
+          )
+
+          test -n "${MIHOMO_URL}"
+          curl -fsSL --retry 3 "${MIHOMO_URL}" -o mihomo.gz
+          gzip -dc mihomo.gz > mihomo
+          chmod +x mihomo
+          ./mihomo -v
+
+      - name: Merge and deduplicate rules
+        run: |
+          ./mihomo convert-ruleset domain mrs awavenue.mrs awavenue.txt
+          ./mihomo convert-ruleset domain mrs 217heidai.mrs 217heidai.txt
+
+          awk 'NF && !seen[$0]++ { print }' \
+            awavenue.txt 217heidai.txt > merged-pass1.txt
+
+          ./mihomo convert-ruleset domain text \
+            merged-pass1.txt merged-pass1.mrs
+          ./mihomo convert-ruleset domain mrs \
+            merged-pass1.mrs merged-canonical.txt
+          ./mihomo convert-ruleset domain text \
+            merged-canonical.txt merged-ads.mrs
+
+      - name: Validate output
+        run: |
+          test -s merged-ads.mrs
+          ./mihomo convert-ruleset domain mrs \
+            merged-ads.mrs merged-verify.txt
+          cmp -s merged-canonical.txt merged-verify.txt
+          echo "Merged rules: $(wc -l < merged-verify.txt)"
+
+      - name: Commit updated rule
+        run: |
+          rm -f awavenue.mrs 217heidai.mrs
+          rm -f awavenue.txt 217heidai.txt
+          rm -f merged-pass1.txt merged-pass1.mrs
+          rm -f merged-canonical.txt merged-verify.txt
+          rm -f mihomo mihomo.gz
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add merged-ads.mrs
+
+          if git diff --cached --quiet; then
+            echo "No rule changes"
+            exit 0
+          fi
+
+          git commit -m "Update merged ads rules"
+          git push origin HEAD:main
