@@ -3,7 +3,6 @@ name: Update CN IPv4 Rules
 on:
   workflow_dispatch:
   schedule:
-    # 每天北京时间 07:47 运行
     - cron: "0 */8 * * *"
 
 permissions:
