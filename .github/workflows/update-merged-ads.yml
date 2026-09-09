@@ -8,10 +8,15 @@ on:
     paths:
       - ".github/workflows/update-merged-ads.yml"
   schedule:
-    - cron: "0 */8 * * *"
+    - cron: "0 8 * * *"
+      timezone: "Asia/Shanghai"
 
 permissions:
   contents: write
+
+concurrency:
+  group: my-rules-daily-update
+  cancel-in-progress: false
 
 jobs:
   update:
