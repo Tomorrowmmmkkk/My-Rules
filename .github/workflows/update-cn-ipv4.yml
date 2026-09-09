@@ -1,4 +1,4 @@
-name: Update Merged CN IPv4 Rules
+name: Update CN IPv4 Rules
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: update-merged-cn-ipv4
+  group: my-rules-daily-update
   cancel-in-progress: false
 
 jobs:
@@ -21,7 +21,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Merge, remove IPv6, deduplicate and aggregate
+      - name: Build IPv4 source and merged lists
         shell: bash
         run: |
           python3 - <<'PY'
@@ -34,12 +34,12 @@ jobs:
               "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo/geoip/cn.list",
           )
 
-          networks = set()
-          for url in sources:
+          def load_ipv4(url):
               request = urllib.request.Request(url, headers={"User-Agent": "My-Rules updater"})
               with urllib.request.urlopen(request, timeout=60) as response:
                   text = response.read().decode("utf-8-sig")
 
+              networks = set()
               for raw_line in text.splitlines():
                   value = raw_line.split("#", 1)[0].strip()
                   if not value:
@@ -47,15 +47,23 @@ jobs:
                   network = ipaddress.ip_network(value, strict=False)
                   if network.version == 4:
                       networks.add(network)
+              return networks
 
-          merged = list(ipaddress.collapse_addresses(networks))
+          lite = load_ipv4(sources[0])
+          full = load_ipv4(sources[1])
+
+          only = sorted(lite, key=lambda network: (int(network.network_address), network.prefixlen))
+          merged = list(ipaddress.collapse_addresses(lite | full))
           merged.sort(key=lambda network: (int(network.network_address), network.prefixlen))
-          if not merged:
+          if not only or not merged:
               raise RuntimeError("No IPv4 networks were generated")
 
-          output = "\n".join(str(network) for network in merged) + "\n"
-          Path("cn-ipv4-merged.list").write_text(output, encoding="utf-8", newline="\n")
-          print(f"Generated {len(merged)} aggregated IPv4 rules")
+          only_output = "\n".join(str(network) for network in only) + "\n"
+          merged_output = "\n".join(str(network) for network in merged) + "\n"
+          Path("cn-ipv4-only.list").write_text(only_output, encoding="utf-8", newline="\n")
+          Path("cn-ipv4-merged.list").write_text(merged_output, encoding="utf-8", newline="\n")
+          print(f"Generated {len(only)} source IPv4 rules")
+          print(f"Generated {len(merged)} aggregated merged IPv4 rules")
           PY
 
       - name: Download latest Mihomo
@@ -85,13 +93,16 @@ jobs:
           curl -fsSL "$download_url" | gzip -dc > "$RUNNER_TEMP/mihomo"
           chmod +x "$RUNNER_TEMP/mihomo"
 
-      - name: Build MRS rule set
+      - name: Build MRS rule sets
         shell: bash
         run: |
           "$RUNNER_TEMP/mihomo" convert-ruleset ipcidr text \
+            cn-ipv4-only.list cn-ipv4-only.mrs
+          "$RUNNER_TEMP/mihomo" convert-ruleset ipcidr text \
             cn-ipv4-merged.list cn-ipv4-merged.mrs
+          test -s cn-ipv4-only.mrs
           test -s cn-ipv4-merged.mrs
-          if grep -q ':' cn-ipv4-merged.list; then
+          if grep -q ':' cn-ipv4-only.list cn-ipv4-merged.list; then
             echo "IPv6 removal failed"
             exit 1
           fi
@@ -99,7 +110,8 @@ jobs:
       - name: Commit updated files
         shell: bash
         run: |
-          git add cn-ipv4-merged.list cn-ipv4-merged.mrs
+          git add cn-ipv4-only.list cn-ipv4-only.mrs \
+            cn-ipv4-merged.list cn-ipv4-merged.mrs
           if git diff --cached --quiet; then
             echo "No rule changes"
             exit 0
@@ -107,5 +119,5 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Update merged CN IPv4 rules"
+          git commit -m "Update CN IPv4 rules"
           git push
