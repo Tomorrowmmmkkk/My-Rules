@@ -33,6 +33,7 @@ jobs:
               "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo-lite/geoip/cn.list",
               "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo/geoip/cn.list",
               "https://raw.githubusercontent.com/Hackl0us/GeoIP2-CN/release/CN-ip-cidr.txt",
+              "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/ChinaIPs/ChinaIPs_IP_No_IPv6.txt",
           )
 
           def load_ipv4(url):
@@ -53,9 +54,10 @@ jobs:
           lite = load_ipv4(sources[0])
           full = load_ipv4(sources[1])
           hackl0us = load_ipv4(sources[2])
+          china_ips = load_ipv4(sources[3])
 
           only = sorted(lite, key=lambda network: (int(network.network_address), network.prefixlen))
-          merged = list(ipaddress.collapse_addresses(lite | full | hackl0us))
+          merged = list(ipaddress.collapse_addresses(lite | full | hackl0us | china_ips))
           merged.sort(key=lambda network: (int(network.network_address), network.prefixlen))
           if not only or not merged:
               raise RuntimeError("No IPv4 networks were generated")
