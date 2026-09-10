@@ -32,6 +32,7 @@ jobs:
           sources = (
               "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo-lite/geoip/cn.list",
               "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo/geoip/cn.list",
+              "https://raw.githubusercontent.com/Hackl0us/GeoIP2-CN/release/CN-ip-cidr.txt",
           )
 
           def load_ipv4(url):
@@ -51,9 +52,10 @@ jobs:
 
           lite = load_ipv4(sources[0])
           full = load_ipv4(sources[1])
+          hackl0us = load_ipv4(sources[2])
 
           only = sorted(lite, key=lambda network: (int(network.network_address), network.prefixlen))
-          merged = list(ipaddress.collapse_addresses(lite | full))
+          merged = list(ipaddress.collapse_addresses(lite | full | hackl0us))
           merged.sort(key=lambda network: (int(network.network_address), network.prefixlen))
           if not only or not merged:
               raise RuntimeError("No IPv4 networks were generated")
@@ -69,28 +71,15 @@ jobs:
       - name: Download ad rule sources
         shell: bash
         run: |
-          curl -fsSL --retry 3 \
-            "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Clash.mrs" \
-            -o awavenue.mrs
-          curl -fsSL --retry 3 \
-            "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockmihomolite.mrs" \
-            -o 217heidai.mrs
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Clash.mrs" -o awavenue.mrs
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockmihomolite.mrs" -o 217heidai.mrs
 
       - name: Download latest Mihomo
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          MIHOMO_URL=$(
-            curl -fsSL --retry 3 \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" |
-            jq -r '.assets[].browser_download_url' |
-            grep -E '/mihomo-linux-amd64-compatible-v[^/]+\.gz$' |
-            head -n 1
-          )
-
+          MIHOMO_URL=$(curl -fsSL --retry 3 -H "Authorization: Bearer ${GH_TOKEN}" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" | jq -r '.assets[].browser_download_url' | grep -E '/mihomo-linux-amd64-compatible-v[^/]+\.gz$' | head -n 1)
           test -n "${MIHOMO_URL}"
           curl -fsSL --retry 3 "${MIHOMO_URL}" -o mihomo.gz
           gzip -dc mihomo.gz > mihomo
@@ -100,10 +89,8 @@ jobs:
       - name: Build CN IPv4 MRS rule sets
         shell: bash
         run: |
-          ./mihomo convert-ruleset ipcidr text \
-            cn-ipv4-only.list cn-ipv4-only.mrs
-          ./mihomo convert-ruleset ipcidr text \
-            cn-ipv4-merged.list cn-ipv4-merged.mrs
+          ./mihomo convert-ruleset ipcidr text cn-ipv4-only.list cn-ipv4-only.mrs
+          ./mihomo convert-ruleset ipcidr text cn-ipv4-merged.list cn-ipv4-merged.mrs
 
           test -s cn-ipv4-only.mrs
           test -s cn-ipv4-merged.mrs
@@ -118,31 +105,24 @@ jobs:
           ./mihomo convert-ruleset domain mrs awavenue.mrs awavenue.txt
           ./mihomo convert-ruleset domain mrs 217heidai.mrs 217heidai.txt
 
-          awk 'NF && !seen[$0]++ { print }' \
-            awavenue.txt 217heidai.txt > merged-pass1.txt
+          awk 'NF && !seen[$0]++ { print }' awavenue.txt 217heidai.txt > merged-pass1.txt
 
-          ./mihomo convert-ruleset domain text \
-            merged-pass1.txt merged-pass1.mrs
-          ./mihomo convert-ruleset domain mrs \
-            merged-pass1.mrs merged-canonical.txt
-          ./mihomo convert-ruleset domain text \
-            merged-canonical.txt merged-ads.mrs
+          ./mihomo convert-ruleset domain text merged-pass1.txt merged-pass1.mrs
+          ./mihomo convert-ruleset domain mrs merged-pass1.mrs merged-canonical.txt
+          ./mihomo convert-ruleset domain text merged-canonical.txt merged-ads.mrs
 
       - name: Validate outputs
         shell: bash
         run: |
           test -s merged-ads.mrs
-          ./mihomo convert-ruleset domain mrs \
-            merged-ads.mrs merged-verify.txt
+          ./mihomo convert-ruleset domain mrs merged-ads.mrs merged-verify.txt
           cmp -s merged-canonical.txt merged-verify.txt
           echo "Merged ad rules: $(wc -l < merged-verify.txt)"
 
       - name: Commit updated rules
         shell: bash
         run: |
-          git add cn-ipv4-only.list cn-ipv4-only.mrs \
-            cn-ipv4-merged.list cn-ipv4-merged.mrs \
-            merged-ads.mrs
+          git add cn-ipv4-only.list cn-ipv4-only.mrs cn-ipv4-merged.list cn-ipv4-merged.mrs merged-ads.mrs
 
           if git diff --cached --quiet; then
             echo "No rule changes"
@@ -150,7 +130,6 @@ jobs:
           fi
 
           git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Update all rules"
           git push origin HEAD:main
