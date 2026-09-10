@@ -34,6 +34,7 @@ jobs:
               "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/refs/heads/meta/geo/geoip/cn.list",
               "https://raw.githubusercontent.com/Hackl0us/GeoIP2-CN/release/CN-ip-cidr.txt",
               "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/ChinaIPs/ChinaIPs_IP_No_IPv6.txt",
+              "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/ChinaIPsBGP/ChinaIPsBGP_IP.txt",
           )
 
           def load_ipv4(url):
@@ -55,18 +56,26 @@ jobs:
           full = load_ipv4(sources[1])
           hackl0us = load_ipv4(sources[2])
           china_ips = load_ipv4(sources[3])
+          china_ips_bgp = load_ipv4(sources[4])
 
           only = sorted(lite, key=lambda network: (int(network.network_address), network.prefixlen))
+          exact = sorted(
+              lite | full | hackl0us | china_ips | china_ips_bgp,
+              key=lambda network: (int(network.network_address), network.prefixlen),
+          )
           merged = list(ipaddress.collapse_addresses(lite | full | hackl0us | china_ips))
           merged.sort(key=lambda network: (int(network.network_address), network.prefixlen))
-          if not only or not merged:
+          if not only or not exact or not merged:
               raise RuntimeError("No IPv4 networks were generated")
 
           only_output = "\n".join(str(network) for network in only) + "\n"
+          exact_output = "\n".join(str(network) for network in exact) + "\n"
           merged_output = "\n".join(str(network) for network in merged) + "\n"
           Path("cn-ipv4-only.list").write_text(only_output, encoding="utf-8", newline="\n")
+          Path("cn-ipv4-all-exact-dedup.list").write_text(exact_output, encoding="utf-8", newline="\n")
           Path("cn-ipv4-merged.list").write_text(merged_output, encoding="utf-8", newline="\n")
           print(f"Generated {len(only)} source IPv4 rules")
+          print(f"Generated {len(exact)} exact-deduplicated IPv4 rules")
           print(f"Generated {len(merged)} aggregated merged IPv4 rules")
           PY
 
@@ -105,7 +114,7 @@ jobs:
           test -s cn-ipv4-only.mrs
           test -s cn-ipv4-merged.mrs
           test -s google-ipv4.mrs
-          if grep -q ':' cn-ipv4-only.list cn-ipv4-merged.list google-ipv4-verify.list; then
+          if grep -q ':' cn-ipv4-only.list cn-ipv4-all-exact-dedup.list cn-ipv4-merged.list google-ipv4-verify.list; then
             echo "IPv6 removal failed"
             exit 1
           fi
@@ -134,7 +143,7 @@ jobs:
       - name: Commit updated rules
         shell: bash
         run: |
-          git add cn-ipv4-only.list cn-ipv4-only.mrs cn-ipv4-merged.list cn-ipv4-merged.mrs google-ipv4.mrs merged-ads.mrs
+          git add cn-ipv4-only.list cn-ipv4-only.mrs cn-ipv4-all-exact-dedup.list cn-ipv4-merged.list cn-ipv4-merged.mrs google-ipv4.mrs merged-ads.mrs
 
           if git diff --cached --quiet; then
             echo "No rule changes"
