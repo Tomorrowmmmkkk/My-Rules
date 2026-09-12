@@ -126,7 +126,9 @@ jobs:
           ./mihomo convert-ruleset domain mrs awavenue.mrs awavenue.txt
           ./mihomo convert-ruleset domain mrs 217heidai.mrs 217heidai.txt
 
-          awk 'NF && !seen[$0]++ { print }' awavenue.txt 217heidai.txt > merged-pass1.txt
+          grep -Eiv 'weibo|sina' 217heidai.txt > 217heidai-filtered.txt
+          echo "Removed Sina/Weibo rules from 217heidai: $(( $(wc -l < 217heidai.txt) - $(wc -l < 217heidai-filtered.txt) ))"
+          awk 'NF && !seen[$0]++ { print }' awavenue.txt 217heidai-filtered.txt > merged-pass1.txt
 
           ./mihomo convert-ruleset domain text merged-pass1.txt merged-pass1.mrs
           ./mihomo convert-ruleset domain mrs merged-pass1.mrs merged-canonical.txt
@@ -138,6 +140,12 @@ jobs:
           test -s merged-ads.mrs
           ./mihomo convert-ruleset domain mrs merged-ads.mrs merged-verify.txt
           cmp -s merged-canonical.txt merged-verify.txt
+          grep -Ei 'weibo|sina' awavenue.txt | sort -u > awavenue-sina-weibo.txt
+          grep -Ei 'weibo|sina' merged-verify.txt | sort -u > merged-sina-weibo.txt
+          if ! cmp -s awavenue-sina-weibo.txt merged-sina-weibo.txt; then
+            echo "Sina/Weibo rules do not match AWAvenue"
+            exit 1
+          fi
           echo "Merged ad rules: $(wc -l < merged-verify.txt)"
 
       - name: Commit updated rules
